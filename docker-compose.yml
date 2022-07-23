@@ -11,7 +11,7 @@ services:
       - RABBITMQ_DEFAULT_PASS=admin
 
   runner:
-    image: explabs/platform-runner
+    image: explabs/potee-runner
     build:
       context: .
     environment:
