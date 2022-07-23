@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -63,11 +65,48 @@ func failOnError(err error, msg string) {
 	}
 }
 
+func LoadScripts(scriptDir string) {
+	endpoint := os.Getenv("MINIO_HOST")
+	accessKeyID := os.Getenv("MINIO_ACCESS_KEY")
+	secretAccessKey := os.Getenv("MINIO_SECRET_KEY")
+	useSSL := false
+
+	// Initialize minio client object.
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		log.Fatalln(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer cancel()
+
+	objectCh := minioClient.ListObjects(ctx, "scripts", minio.ListObjectsOptions{
+		Prefix:    "",
+		Recursive: true,
+	})
+	for object := range objectCh {
+		if object.Err != nil {
+			log.Println(object.Err)
+			continue
+		}
+		err := minioClient.FGetObject(context.Background(), "scripts", object.Key, scriptDir+object.Key, minio.GetObjectOptions{})
+		if err != nil {
+			log.Println(err)
+		}
+	}
+}
+
 func Execute(requests []Request) []Result {
+	scriptDir := "scripts/"
 	errors := make(chan Result)
 	results := make(chan Result)
+	LoadScripts(scriptDir)
+
 	for _, r := range requests {
-		script := InitScript(r.ID, r.Extra, r.Service, r.Script, r.Args...)
+		script := InitScript(r.ID, r.Extra, r.Service, scriptDir+r.Script, r.Args...)
 		go script.Run(results, errors)
 	}
 	var answers []Result

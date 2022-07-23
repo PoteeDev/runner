@@ -5,7 +5,7 @@ RUN go mod download
 COPY main.go .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -o runner .
 
-FROM alpine
+FROM python:3-alpine
 WORKDIR /usr/app
 COPY --from=build /usr/app/runner .
 ENTRYPOINT [ "./runner" ]
