@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -65,6 +66,8 @@ func failOnError(err error, msg string) {
 	}
 }
 
+var scriptsSum = make(map[string]string)
+
 func LoadScripts(scriptDir string) {
 	endpoint := os.Getenv("MINIO_HOST")
 	accessKeyID := os.Getenv("MINIO_ACCESS_KEY")
@@ -92,9 +95,28 @@ func LoadScripts(scriptDir string) {
 			log.Println(object.Err)
 			continue
 		}
-		err := minioClient.FGetObject(context.Background(), "scripts", object.Key, scriptDir+object.Key, minio.GetObjectOptions{})
-		if err != nil {
-			log.Println(err)
+		// check if script changed
+		isNew := true
+		for name, sum := range scriptsSum {
+			if name == object.Key {
+				if sum == object.ETag {
+					isNew = false
+					break
+				}
+				break
+			}
+		}
+
+		// download new version of script if it changed
+		if isNew {
+			err := minioClient.FGetObject(context.Background(), "scripts", object.Key, scriptDir+object.Key, minio.GetObjectOptions{})
+			if err != nil {
+				log.Println(err)
+			}
+			// update local script sum
+			scriptsSum[object.Key] = object.ETag
+
+			log.Println("download", object.Key, object.VersionID)
 		}
 	}
 }
@@ -103,7 +125,10 @@ func Execute(requests []Request) []Result {
 	scriptDir := "scripts/"
 	errors := make(chan Result)
 	results := make(chan Result)
+	start := time.Now()
 	LoadScripts(scriptDir)
+	elapsed := time.Since(start)
+	log.Printf("LoadScripts took %s", elapsed)
 
 	for _, r := range requests {
 		script := InitScript(r.ID, r.Extra, r.Service, scriptDir+r.Script, r.Args...)
