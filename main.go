@@ -23,10 +23,9 @@ type Script struct {
 	Args     []string
 }
 
-func InitScript(id, scriptExtra, srv, name string, args ...string) *Script {
+func InitScript(id, srv, name string, args ...string) *Script {
 	return &Script{
 		ID:       id,
-		Extra:    scriptExtra,
 		Service:  srv,
 		Executor: "python3",
 		Name:     name,
@@ -38,14 +37,12 @@ type Result struct {
 	ID      string `json:"id"`
 	Action  string `json:"action"`
 	Service string `json:"srv"`
-	Extra   string `json:"extra"`
 	Answer  string `json:"answer"`
 }
 
 type Request struct {
 	ID      string   `json:"id"`
 	Service string   `json:"srv"`
-	Extra   string   `json:"extra"`
 	Script  string   `json:"script"`
 	Args    []string `json:"args"`
 }
@@ -54,9 +51,9 @@ func (s *Script) Run(r, e chan Result) {
 	args := append([]string{s.Name}, s.Args...)
 	out, err := exec.Command(s.Executor, args...).Output()
 	if err != nil {
-		e <- Result{s.ID, s.Args[0], s.Service, "error", err.Error()}
+		e <- Result{s.ID, s.Args[0], s.Service, err.Error()}
 	} else {
-		r <- Result{s.ID, s.Args[0], s.Service, s.Extra, string(out)}
+		r <- Result{s.ID, s.Args[0], s.Service, string(out)}
 	}
 }
 
@@ -121,7 +118,7 @@ func LoadScripts(scriptDir string) {
 	}
 }
 
-func Execute(requests []Request) []Result {
+func Execute(r Request) Result {
 	scriptDir := "scripts/"
 	errors := make(chan Result)
 	results := make(chan Result)
@@ -130,22 +127,20 @@ func Execute(requests []Request) []Result {
 	elapsed := time.Since(start)
 	log.Printf("LoadScripts took %s", elapsed)
 
-	for _, r := range requests {
-		script := InitScript(r.ID, r.Extra, r.Service, scriptDir+r.Script, r.Args...)
-		go script.Run(results, errors)
+	script := InitScript(r.ID, r.Service, scriptDir+r.Script, r.Args...)
+	go script.Run(results, errors)
+
+	var answer Result
+	select {
+	case r := <-results:
+		answer = r
+		log.Printf("%s:%s:%s return '%s'", r.ID, r.Service, r.Action, r.Answer)
+	case e := <-errors:
+		answer = e
+		log.Printf("%s:%s:%s error '%s'", e.ID, e.Service, e.Action, e.Answer)
 	}
-	var answers []Result
-	for range requests {
-		select {
-		case r := <-results:
-			answers = append(answers, r)
-			log.Printf("%s:%s:%s return '%s'", r.ID, r.Service, r.Action, r.Answer)
-		case e := <-errors:
-			answers = append(answers, e)
-			log.Printf("%s:%s:%s error '%s'", e.ID, e.Service, e.Action, e.Answer)
-		}
-	}
-	return answers
+
+	return answer
 }
 
 func main() {
@@ -196,12 +191,12 @@ func main() {
 
 	go func() {
 		for d := range msgs {
-			var requests []Request
-			err = json.Unmarshal(d.Body, &requests)
+			var request Request
+			err = json.Unmarshal(d.Body, &request)
 			if err != nil {
 				log.Println(err)
 			}
-			response := Execute(requests)
+			response := Execute(request)
 			j, err := json.Marshal(response)
 			if err != nil {
 				log.Printf("Error: %s", err.Error())
